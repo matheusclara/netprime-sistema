@@ -10,12 +10,12 @@ COMO RODAR COM DOCKER COMPOSE
 
 3. Subir com Docker Compose:
 
-   docker compose up -d --build
+   docker-compose up -d --build
 
 4. Conferir se subiu:
 
-   docker compose ps
-   docker compose logs -f --tail=80
+   docker-compose ps
+   docker-compose logs -f --tail=80
 
 5. Acessar:
 
@@ -30,7 +30,10 @@ IMPORTANTE
 
 - Nao apague essas pastas. Elas guardam usuarios, historico, contratos enviados e backups.
 
+- O Docker usa a porta interna 5000 somente no localhost da VM.
+  O Nginx continua atendendo o publico na porta 8088 e encaminhando para 127.0.0.1:5000.
+
 - Para atualizar o sistema depois:
 
   git pull
-  docker compose up -d --build
+  docker-compose up -d --build

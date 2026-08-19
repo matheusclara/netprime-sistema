@@ -303,6 +303,33 @@ def save_users(users):
     USERS_FILE.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8")
     return cleaned
 
+def upsert_user(item, old_user=""):
+    user = normalize_user(item)
+    if not user["user"]:
+        raise ValueError("Login inválido.")
+    users = load_users()
+    target = str(old_user or user["user"]).strip().lower()
+    replaced = False
+    for idx, existing in enumerate(users):
+        if existing["user"].lower() == target or existing["user"].lower() == user["user"].lower():
+            if existing["user"] == "admin" and user["user"] != "admin":
+                user["user"] = "admin"
+            users[idx] = {**existing, **user}
+            replaced = True
+            break
+    if not replaced:
+        users.append(user)
+    return save_users(users)
+
+def delete_user(login):
+    login = str(login or "").strip().lower()
+    if not login:
+        raise ValueError("Login inválido.")
+    if login == "admin":
+        raise ValueError("O usuário admin padrão não pode ser removido.")
+    users = [u for u in load_users() if u["user"].lower() != login]
+    return save_users(users)
+
 app = Flask(__name__)
 ALLOWED = {".pdf",".png",".jpg",".jpeg",".webp"}
 
@@ -1451,6 +1478,184 @@ USER_SYNC_SCRIPT = """
 </script>
 """
 
+USER_STRICT_SERVER_SCRIPT = """
+<script id="np-usuarios-servidor-forcado-20260819">
+(function(){
+  function $(id){return document.getElementById(id)}
+  function normalize(u){
+    u = u || {};
+    var team = String(u.team || u.tipo || '').trim();
+    return {
+      name:String(u.name || u.nome || u.user || '').trim(),
+      user:String(u.user || u.login || '').trim(),
+      pass:String(u.pass || u.senha || '').trim(),
+      role:String(u.role || u.categoria || 'vendedor').trim(),
+      tipo:team,
+      team:team,
+      phone:String(u.phone || u.telefone || '').trim(),
+      birth:String(u.birth || u.nascimento || '').trim(),
+      photo:String(u.photo || u.foto || '').trim()
+    };
+  }
+  function readFileAsData(file){
+    return new Promise(function(resolve,reject){
+      var fr = new FileReader();
+      fr.onload = function(){resolve(fr.result)};
+      fr.onerror = reject;
+      fr.readAsDataURL(file);
+    });
+  }
+  async function loadServerUsersStrict(){
+    var r = await fetch('/api/usuarios', {cache:'no-store'});
+    var j = await r.json();
+    if(!j || !j.ok) throw new Error((j && j.erro) || 'Falha ao carregar usuários.');
+    var users = (j.usuarios || []).map(normalize);
+    localStorage.setItem('prime_users', JSON.stringify(users));
+    return users;
+  }
+  async function saveServerUsersStrict(users){
+    var r = await fetch('/api/usuarios', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({usuarios:(users || []).map(normalize)})
+    });
+    var j = await r.json();
+    if(!j || !j.ok) throw new Error((j && j.erro) || 'Falha ao salvar usuários.');
+    var saved = (j.usuarios || []).map(normalize);
+    localStorage.setItem('prime_users', JSON.stringify(saved));
+    return saved;
+  }
+  async function upsertUserStrict(payload, oldUser){
+    var r = await fetch('/api/usuarios/upsert', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({usuario:normalize(payload), old_user:oldUser || ''})
+    });
+    var j = await r.json();
+    if(!j || !j.ok) throw new Error((j && j.erro) || 'Falha ao salvar usuário.');
+    var users = (j.usuarios || []).map(normalize);
+    localStorage.setItem('prime_users', JSON.stringify(users));
+    return users;
+  }
+  async function deleteUserStrict(login){
+    var r = await fetch('/api/usuarios/delete', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({user:login || ''})
+    });
+    var j = await r.json();
+    if(!j || !j.ok) throw new Error((j && j.erro) || 'Falha ao excluir usuário.');
+    var users = (j.usuarios || []).map(normalize);
+    localStorage.setItem('prime_users', JSON.stringify(users));
+    return users;
+  }
+  window.npLoadUsersFromServer = loadServerUsersStrict;
+  window.getUsers = function(){
+    try{return JSON.parse(localStorage.getItem('prime_users') || '[]').map(normalize)}catch(e){return []}
+  };
+  window.setUsers = function(users){
+    localStorage.setItem('prime_users', JSON.stringify((users || []).map(normalize)));
+    saveServerUsersStrict(users).then(function(){
+      try{if(typeof renderUsersView === 'function') renderUsersView()}catch(e){}
+      try{if(typeof renderUsersAdmin === 'function') renderUsersAdmin()}catch(e){}
+      try{if(typeof updateTopUser === 'function') updateTopUser()}catch(e){}
+    }).catch(function(err){alert('Não foi possível salvar no servidor: ' + err.message)});
+  };
+  window.saveSystemUserV43 = async function(){
+    try{
+      var idxRaw = localStorage.getItem('prime_user_editing_idx');
+      var idx = idxRaw == null || idxRaw === '' ? -1 : Number(idxRaw);
+      var users = await loadServerUsersStrict();
+      var old = idx >= 0 ? (users[idx] || {}) : {};
+      var name = ($('newUserName2')?.value || '').trim();
+      var user = ($('newUserLogin2')?.value || '').trim();
+      var pass = ($('newUserPass2')?.value || '').trim();
+      if(!name || !user || (idx < 0 && !pass)) return alert('Informe nome, login e senha.');
+      if(users.some(function(u,i){return i !== idx && String(u.user || '').toLowerCase() === user.toLowerCase()})){
+        return alert('Esse login já existe.');
+      }
+      var role = $('newUserRole2')?.value || old.role || 'vendedor';
+      var team = (role === 'vendedor' || role === 'gestao_base') ? ($('newUserTeam2')?.value || old.team || old.tipo || 'interno') : '';
+      var payload = {
+        name:name,
+        user:user,
+        pass:pass || old.pass || '',
+        role:role,
+        tipo:team,
+        team:team,
+        phone:$('newUserPhone2')?.value || old.phone || '',
+        birth:$('newUserBirth2')?.value || old.birth || '',
+        photo:old.photo || ''
+      };
+      var file = $('newUserPhoto2')?.files?.[0];
+      if(file) payload.photo = await readFileAsData(file);
+      await upsertUserStrict(payload, old.user || user);
+      localStorage.removeItem('prime_user_editing_idx');
+      try{if(typeof audit === 'function') audit(idx >= 0 ? 'Editou usuário' : 'Criou usuário', user)}catch(e){}
+      try{if(typeof renderUsersView === 'function') renderUsersView()}catch(e){}
+      try{if(typeof renderUsersAdmin === 'function') renderUsersAdmin()}catch(e){}
+      try{if(typeof updateTopUserCard === 'function') updateTopUserCard()}catch(e){}
+      try{if(typeof updateTopUser === 'function') updateTopUser()}catch(e){}
+      alert(idx >= 0 ? 'Usuário atualizado.' : 'Usuário adicionado.');
+    }catch(err){
+      alert('Não foi possível salvar o usuário no servidor: ' + (err && err.message ? err.message : err));
+    }
+  };
+  window.addSystemUser = window.saveSystemUserV43;
+  window.deleteSystemUser = async function(i){
+    try{
+      var users = await loadServerUsersStrict();
+      var item = users[Number(i)];
+      if(!item) return;
+      if(item.user === 'admin') return alert('O usuário admin padrão não pode ser removido.');
+      if(!confirm('Excluir este usuário?')) return;
+      await deleteUserStrict(item.user);
+      try{if(typeof renderUsersView === 'function') renderUsersView()}catch(e){}
+      try{if(typeof renderUsersAdmin === 'function') renderUsersAdmin()}catch(e){}
+    }catch(err){
+      alert('Não foi possível excluir no servidor: ' + (err && err.message ? err.message : err));
+    }
+  };
+  window.npSaveMyProfile = async function(){
+    try{
+      var users = await loadServerUsersStrict();
+      var loginAtual = localStorage.getItem('primeBudgetUser') || '';
+      var idx = users.findIndex(function(u){return String(u.user || '') === String(loginAtual)});
+      if(idx < 0) return alert('Usuário não encontrado.');
+      var current = users[idx] || {};
+      var name = ($('myProfileName')?.value || '').trim();
+      var login = ($('myProfileLogin')?.value || '').trim();
+      if(!name || !login) return alert('Informe nome e login.');
+      if(users.some(function(u,i){return i !== idx && String(u.user || '').toLowerCase() === login.toLowerCase()})){
+        return alert('Esse login já existe.');
+      }
+      var payload = Object.assign({}, current, {
+        name:name,
+        user:login,
+        phone:($('myProfilePhone')?.value || '').trim(),
+        birth:($('myProfileBirth')?.value || '').trim()
+      });
+      var file = $('myProfilePhoto')?.files?.[0];
+      if(file) payload.photo = await readFileAsData(file);
+      await upsertUserStrict(payload, current.user || loginAtual);
+      localStorage.setItem('primeBudgetUser', login);
+      try{if(typeof updateTopUser === 'function') updateTopUser()}catch(e){}
+      try{if(typeof renderSettingsView === 'function') renderSettingsView()}catch(e){}
+      alert('Perfil atualizado.');
+    }catch(err){
+      alert('Não foi possível salvar no servidor: ' + (err && err.message ? err.message : err));
+    }
+  };
+  document.addEventListener('DOMContentLoaded', function(){
+    loadServerUsersStrict().then(function(){
+      try{if(typeof renderUsersView === 'function') renderUsersView()}catch(e){}
+      try{if(typeof renderUsersAdmin === 'function') renderUsersAdmin()}catch(e){}
+    }).catch(function(){});
+  });
+})();
+</script>
+"""
+
 @app.route("/")
 def index():
     html = SISTEMA_HTML
@@ -1458,6 +1663,8 @@ def index():
         html = html.replace("</body>", CONTRACTS_TOGGLE_SCRIPT + "\n</body>")
     if "np-usuarios-servidor-20260803" not in html:
         html = html.replace("</body>", USER_SYNC_SCRIPT + "\n</body>")
+    if "np-usuarios-servidor-forcado-20260819" not in html:
+        html = html.replace("</body>", USER_STRICT_SERVER_SCRIPT + "\n</body>")
     response = Response(html, mimetype="text/html; charset=utf-8")
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
@@ -1495,6 +1702,24 @@ def usuarios_api():
     if not isinstance(usuarios, list):
         return jsonify({"ok": False, "erro": "Lista de usuários inválida."}), 400
     return jsonify({"ok": True, "usuarios": save_users(usuarios)})
+
+@app.route("/api/usuarios/upsert", methods=["POST"])
+def usuarios_upsert_api():
+    data = request.json or {}
+    try:
+        usuarios = upsert_user(data.get("usuario") or data, data.get("old_user") or "")
+        return jsonify({"ok": True, "usuarios": usuarios})
+    except ValueError as exc:
+        return jsonify({"ok": False, "erro": str(exc)}), 400
+
+@app.route("/api/usuarios/delete", methods=["POST"])
+def usuarios_delete_api():
+    data = request.json or {}
+    try:
+        usuarios = delete_user(data.get("user") or data.get("login") or "")
+        return jsonify({"ok": True, "usuarios": usuarios})
+    except ValueError as exc:
+        return jsonify({"ok": False, "erro": str(exc)}), 400
 
 @app.route("/api/analisar", methods=["POST"])
 def analisar():
