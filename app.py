@@ -22,6 +22,8 @@ BACKUP_DIR = APP_DIR / "backups"
 CONFIG_FILE = DATA_DIR / "config.json"
 HISTORY_FILE = DATA_DIR / "historico.json"
 USERS_FILE = DATA_DIR / "usuarios.json"
+SALES_FILE = DATA_DIR / "vendas.json"
+QUOTES_FILE = DATA_DIR / "orcamentos.json"
 DATA_DIR.mkdir(exist_ok=True)
 UPLOAD_DIR.mkdir(exist_ok=True)
 BACKUP_DIR.mkdir(exist_ok=True)
@@ -254,6 +256,90 @@ def load_history():
 
 def save_history(items):
     HISTORY_FILE.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def load_json_list(path):
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+    return []
+
+def save_json_list(path, items, limit=1000):
+    safe_items = items if isinstance(items, list) else []
+    path.write_text(json.dumps(safe_items[:limit], ensure_ascii=False, indent=2), encoding="utf-8")
+
+def record_key(item):
+    item = item or {}
+    for field in ("id", "number"):
+        value = str(item.get(field) or "").strip()
+        if value:
+            return f"{field}:{value}"
+    base = "|".join(str(item.get(k) or "").strip() for k in ("date", "client", "seller", "plan", "total"))
+    return f"auto:{base}" if base.strip("|") else ""
+
+def merge_records(existing_items, incoming_items, limit=1000):
+    merged = {}
+    order = []
+    for item in existing_items or []:
+        if not isinstance(item, dict):
+            continue
+        key = record_key(item)
+        if not key:
+            continue
+        if key not in merged:
+            order.append(key)
+        merged[key] = item
+    for item in incoming_items or []:
+        if not isinstance(item, dict):
+            continue
+        key = record_key(item)
+        if not key:
+            continue
+        if key not in merged:
+            order.insert(0, key)
+        merged[key] = item
+    return [merged[key] for key in order if key in merged][:limit]
+
+def current_api_user():
+    user = str(request.headers.get("X-Netprime-User") or "").strip()
+    password = str(request.headers.get("X-Netprime-Pass") or "").strip()
+    if not user or not password:
+        data = request.json if request.is_json else {}
+        if isinstance(data, dict):
+            user = str(data.get("_user") or data.get("auth_user") or user).strip()
+            password = str(data.get("_pass") or data.get("auth_pass") or password).strip()
+    for item in load_users():
+        if item.get("user") == user and item.get("pass") == password:
+            return item
+    return None
+
+def owner_matches(item, user):
+    if not user:
+        return False
+    login = str(user.get("user") or "").strip()
+    name = str(user.get("name") or "").strip()
+    created_by = str((item or {}).get("createdBy") or "").strip()
+    seller_user = str((item or {}).get("sellerUser") or "").strip()
+    seller = str((item or {}).get("seller") or "").strip()
+    sellers = (item or {}).get("sellers") if isinstance((item or {}).get("sellers"), dict) else {}
+    return (
+        created_by == login
+        or seller_user == login
+        or seller == login
+        or (name and seller == name)
+        or login in [str(v).strip() for v in sellers.values()]
+        or (name and name in [str(v).strip() for v in sellers.values()])
+    )
+
+def visible_records_for_user(items, user):
+    if not user:
+        return []
+    role = str(user.get("role") or "").strip().lower()
+    if role == "admin":
+        return items
+    return [item for item in items if owner_matches(item, user)]
 
 DEFAULT_USERS = [
     {"name": "Administrador", "user": "admin", "pass": "admin123", "role": "admin", "tipo": ""},
@@ -1719,6 +1805,7 @@ USER_SERVER_LOGIN_SCRIPT = """
         localStorage.setItem('primeBudgetLogged','yes');
         localStorage.setItem('primeBudgetUser',found.user);
         localStorage.setItem('primeBudgetRole',found.role || 'vendedor');
+        sessionStorage.setItem('primeBudgetPass', p);
         try{
           var users = await fetch('/api/usuarios', {cache:'no-store'}).then(function(r){return r.json()});
           if(users && users.ok) localStorage.setItem('prime_users', JSON.stringify((users.usuarios || []).map(normalize)));
@@ -1738,6 +1825,183 @@ USER_SERVER_LOGIN_SCRIPT = """
 </script>
 """
 
+SERVER_DATA_SYNC_SCRIPT = """
+<script id="np-dados-servidor-vendas-orcamentos-20260819">
+(function(){
+  var syncingSales = false;
+  var syncingQuotes = false;
+  function authHeaders(){
+    var user = localStorage.getItem('primeBudgetUser') || '';
+    var pass = sessionStorage.getItem('primeBudgetPass') || '';
+    if(!user || !pass) return null;
+    return {'Content-Type':'application/json','X-Netprime-User':user,'X-Netprime-Pass':pass};
+  }
+  function readKey(key){
+    try{
+      var data = JSON.parse(localStorage.getItem(key) || '[]');
+      return Array.isArray(data) ? data : [];
+    }catch(e){return []}
+  }
+  function writeKey(key, data){
+    try{localStorage.setItem(key, JSON.stringify(Array.isArray(data) ? data : []))}catch(e){}
+  }
+  function stampOwner(items){
+    var login = localStorage.getItem('primeBudgetUser') || '';
+    var name = '';
+    try{
+      var users = JSON.parse(localStorage.getItem('prime_users') || '[]');
+      var me = users.find(function(u){return String(u.user || '') === String(login)});
+      name = me ? String(me.name || '') : '';
+    }catch(e){}
+    return (items || []).map(function(item){
+      if(!item || typeof item !== 'object') return item;
+      var copy = Object.assign({}, item);
+      if(!copy.createdBy) copy.createdBy = login;
+      if(!copy.sellerUser && (copy.seller === login || copy.seller === name || !copy.seller)) copy.sellerUser = login;
+      return copy;
+    });
+  }
+  async function pullServer(kind, key){
+    var headers = authHeaders();
+    if(!headers) return null;
+    try{
+      var r = await fetch('/api/' + kind, {cache:'no-store', headers:headers});
+      if(!r.ok) return null;
+      var j = await r.json();
+      if(!j || !j.ok) return null;
+      var data = kind === 'vendas' ? (j.vendas || []) : (j.orcamentos || []);
+      writeKey(key, data);
+      return data;
+    }catch(e){return null}
+  }
+  async function pushServer(kind, key){
+    var headers = authHeaders();
+    if(!headers) return null;
+    if(kind === 'vendas' && syncingSales) return null;
+    if(kind === 'orcamentos' && syncingQuotes) return null;
+    if(kind === 'vendas') syncingSales = true;
+    if(kind === 'orcamentos') syncingQuotes = true;
+    try{
+      var local = stampOwner(readKey(key));
+      writeKey(key, local);
+      var payload = kind === 'vendas' ? {vendas:local} : {orcamentos:local};
+      var r = await fetch('/api/' + kind + '/sync', {
+        method:'POST',
+        cache:'no-store',
+        headers:headers,
+        body:JSON.stringify(payload)
+      });
+      if(!r.ok) return null;
+      var j = await r.json();
+      if(!j || !j.ok) return null;
+      var data = kind === 'vendas' ? (j.vendas || []) : (j.orcamentos || []);
+      writeKey(key, data);
+      return data;
+    }catch(e){return null}
+    finally{
+      if(kind === 'vendas') syncingSales = false;
+      if(kind === 'orcamentos') syncingQuotes = false;
+    }
+  }
+  function rerender(){
+    try{if(typeof renderSalesView === 'function') renderSalesView()}catch(e){}
+    try{if(typeof renderHistory === 'function') renderHistory()}catch(e){}
+    try{if(typeof renderDashboard === 'function') renderDashboard()}catch(e){}
+  }
+  async function refreshSharedData(){
+    await pullServer('vendas','prime_sales');
+    await pullServer('orcamentos','prime_quotes');
+    rerender();
+  }
+  function syncLater(kind, key){
+    setTimeout(function(){
+      pushServer(kind, key).then(function(){rerender()});
+    }, 100);
+  }
+  var oldDoLogin = window.doLogin;
+  if(typeof oldDoLogin === 'function' && !oldDoLogin.__npServerDataSync){
+    window.doLogin = async function(e){
+      var passEl = document.getElementById('loginPass');
+      var pass = passEl ? passEl.value : '';
+      var result = await oldDoLogin.apply(this, arguments);
+      if(localStorage.getItem('primeBudgetLogged') === 'yes' && pass){
+        sessionStorage.setItem('primeBudgetPass', pass);
+        await refreshSharedData();
+      }
+      return result;
+    };
+    window.doLogin.__npServerDataSync = true;
+  }
+  var oldAddSale = window.addSale;
+  if(typeof oldAddSale === 'function' && !oldAddSale.__npServerDataSync){
+    window.addSale = function(){
+      var result = oldAddSale.apply(this, arguments);
+      syncLater('vendas','prime_sales');
+      return result;
+    };
+    window.addSale.__npServerDataSync = true;
+  }
+  var oldDeleteSale = window.deleteSale;
+  if(typeof oldDeleteSale === 'function' && !oldDeleteSale.__npServerDataSync){
+    window.deleteSale = function(){
+      var result = oldDeleteSale.apply(this, arguments);
+      syncLater('vendas','prime_sales');
+      return result;
+    };
+    window.deleteSale.__npServerDataSync = true;
+  }
+  var oldBulk = window.npApplyBulkSalesStatus;
+  if(typeof oldBulk === 'function' && !oldBulk.__npServerDataSync){
+    window.npApplyBulkSalesStatus = function(){
+      var result = oldBulk.apply(this, arguments);
+      syncLater('vendas','prime_sales');
+      return result;
+    };
+    window.npApplyBulkSalesStatus.__npServerDataSync = true;
+  }
+  var oldSaveQuote = window.saveQuote;
+  if(typeof oldSaveQuote === 'function' && !oldSaveQuote.__npServerDataSync){
+    window.saveQuote = function(){
+      var result = oldSaveQuote.apply(this, arguments);
+      syncLater('orcamentos','prime_quotes');
+      return result;
+    };
+    window.saveQuote.__npServerDataSync = true;
+  }
+  var oldUpdateQuoteStatus = window.updateQuoteStatus;
+  if(typeof oldUpdateQuoteStatus === 'function' && !oldUpdateQuoteStatus.__npServerDataSync){
+    window.updateQuoteStatus = function(){
+      var result = oldUpdateQuoteStatus.apply(this, arguments);
+      syncLater('orcamentos','prime_quotes');
+      return result;
+    };
+    window.updateQuoteStatus.__npServerDataSync = true;
+  }
+  var oldDelHist = window.delHist;
+  if(typeof oldDelHist === 'function' && !oldDelHist.__npServerDataSync){
+    window.delHist = function(){
+      var result = oldDelHist.apply(this, arguments);
+      syncLater('orcamentos','prime_quotes');
+      return result;
+    };
+    window.delHist.__npServerDataSync = true;
+  }
+  var oldShowView = window.showView;
+  if(typeof oldShowView === 'function' && !oldShowView.__npServerDataSync){
+    window.showView = function(v){
+      var result = oldShowView.apply(this, arguments);
+      if(v === 'sales' || v === 'quote' || v === 'dash') refreshSharedData();
+      return result;
+    };
+    window.showView.__npServerDataSync = true;
+  }
+  document.addEventListener('DOMContentLoaded', function(){
+    setTimeout(refreshSharedData, 900);
+  });
+})();
+</script>
+"""
+
 @app.route("/")
 def index():
     html = SISTEMA_HTML
@@ -1749,6 +2013,8 @@ def index():
         html = html.replace("</body>", USER_STRICT_SERVER_SCRIPT + "\n</body>")
     if "np-login-servidor-direto-20260819" not in html:
         html = html.replace("</body>", USER_SERVER_LOGIN_SCRIPT + "\n</body>")
+    if "np-dados-servidor-vendas-orcamentos-20260819" not in html:
+        html = html.replace("</body>", SERVER_DATA_SYNC_SCRIPT + "\n</body>")
     response = Response(html, mimetype="text/html; charset=utf-8")
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
@@ -1816,6 +2082,54 @@ def usuarios_delete_api():
         return jsonify({"ok": True, "usuarios": usuarios})
     except ValueError as exc:
         return jsonify({"ok": False, "erro": str(exc)}), 400
+
+@app.route("/api/vendas", methods=["GET"])
+def vendas_api():
+    api_user = current_api_user()
+    if not api_user:
+        return jsonify({"ok": False, "erro": "Acesso não autorizado."}), 403
+    vendas = load_json_list(SALES_FILE)
+    return jsonify({"ok": True, "vendas": visible_records_for_user(vendas, api_user)})
+
+@app.route("/api/vendas/sync", methods=["POST"])
+def vendas_sync_api():
+    api_user = current_api_user()
+    if not api_user:
+        return jsonify({"ok": False, "erro": "Acesso não autorizado."}), 403
+    data = request.json or {}
+    incoming = data.get("vendas") if isinstance(data, dict) else []
+    if not isinstance(incoming, list):
+        incoming = []
+    role = str(api_user.get("role") or "").strip().lower()
+    if role != "admin":
+        incoming = [item for item in incoming if owner_matches(item, api_user)]
+    merged = merge_records(load_json_list(SALES_FILE), incoming, 1000)
+    save_json_list(SALES_FILE, merged, 1000)
+    return jsonify({"ok": True, "vendas": visible_records_for_user(merged, api_user)})
+
+@app.route("/api/orcamentos", methods=["GET"])
+def orcamentos_api():
+    api_user = current_api_user()
+    if not api_user:
+        return jsonify({"ok": False, "erro": "Acesso não autorizado."}), 403
+    orcamentos = load_json_list(QUOTES_FILE)
+    return jsonify({"ok": True, "orcamentos": visible_records_for_user(orcamentos, api_user)})
+
+@app.route("/api/orcamentos/sync", methods=["POST"])
+def orcamentos_sync_api():
+    api_user = current_api_user()
+    if not api_user:
+        return jsonify({"ok": False, "erro": "Acesso não autorizado."}), 403
+    data = request.json or {}
+    incoming = data.get("orcamentos") if isinstance(data, dict) else []
+    if not isinstance(incoming, list):
+        incoming = []
+    role = str(api_user.get("role") or "").strip().lower()
+    if role != "admin":
+        incoming = [item for item in incoming if owner_matches(item, api_user)]
+    merged = merge_records(load_json_list(QUOTES_FILE), incoming, 1000)
+    save_json_list(QUOTES_FILE, merged, 1000)
+    return jsonify({"ok": True, "orcamentos": visible_records_for_user(merged, api_user)})
 
 @app.route("/api/analisar", methods=["POST"])
 def analisar():
