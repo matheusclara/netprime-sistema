@@ -423,8 +423,8 @@ def upsert_user(item, old_user=""):
     replaced = False
     for idx, existing in enumerate(users):
         if existing["user"].lower() == target or existing["user"].lower() == user["user"].lower():
-            if existing["user"] == "admin" and user["user"] != "admin":
-                user["user"] = "admin"
+            if existing["role"].lower() == "admin":
+                user["role"] = "admin"
             users[idx] = {**existing, **user}
             replaced = True
             break
