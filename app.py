@@ -306,35 +306,25 @@ def save_users(users):
 def merge_users_preserving_existing(existing_users, incoming_users):
     merged = {}
     order = []
-    default_admin_pass = normalize_user(DEFAULT_USERS[0])["pass"]
 
     for item in existing_users or []:
         user = normalize_user(item)
-        key = user["user"].lower()
+        key = user["user"].strip().lower()
         if not key:
             continue
         if key not in merged:
             order.append(key)
         merged[key] = user
 
+    # Esta rota recebe listas antigas do navegador em alguns fluxos.
+    # Por seguranca, ela nunca altera nem remove usuario existente; apenas importa logins novos.
     for item in incoming_users or []:
         user = normalize_user(item)
-        key = user["user"].lower()
-        if not key:
+        key = user["user"].strip().lower()
+        if not key or key in merged:
             continue
-        if key in merged:
-            current = merged[key]
-            updated = {**current, **user}
-            if not user.get("pass"):
-                updated["pass"] = current.get("pass", "")
-            if not user.get("photo"):
-                updated["photo"] = current.get("photo", "")
-            if key == "admin" and current.get("pass") and user.get("pass") == default_admin_pass and current.get("pass") != default_admin_pass:
-                updated["pass"] = current.get("pass", "")
-            merged[key] = updated
-        else:
-            order.append(key)
-            merged[key] = user
+        order.append(key)
+        merged[key] = user
 
     return [merged[key] for key in order if key in merged]
 
