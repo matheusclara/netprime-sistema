@@ -303,6 +303,41 @@ def save_users(users):
     USERS_FILE.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8")
     return cleaned
 
+def merge_users_preserving_existing(existing_users, incoming_users):
+    merged = {}
+    order = []
+    default_admin_pass = normalize_user(DEFAULT_USERS[0])["pass"]
+
+    for item in existing_users or []:
+        user = normalize_user(item)
+        key = user["user"].lower()
+        if not key:
+            continue
+        if key not in merged:
+            order.append(key)
+        merged[key] = user
+
+    for item in incoming_users or []:
+        user = normalize_user(item)
+        key = user["user"].lower()
+        if not key:
+            continue
+        if key in merged:
+            current = merged[key]
+            updated = {**current, **user}
+            if not user.get("pass"):
+                updated["pass"] = current.get("pass", "")
+            if not user.get("photo"):
+                updated["photo"] = current.get("photo", "")
+            if key == "admin" and current.get("pass") and user.get("pass") == default_admin_pass and current.get("pass") != default_admin_pass:
+                updated["pass"] = current.get("pass", "")
+            merged[key] = updated
+        else:
+            order.append(key)
+            merged[key] = user
+
+    return [merged[key] for key in order if key in merged]
+
 def upsert_user(item, old_user=""):
     user = normalize_user(item)
     if not user["user"]:
@@ -1402,7 +1437,6 @@ USER_SYNC_SCRIPT = """
           var parsed = JSON.parse(value || '[]');
           if(Array.isArray(parsed)){
             serverUsers = parsed.map(normalize);
-            postUsers(serverUsers).catch(function(){});
             setTimeout(refreshUserScreens, 50);
           }
         }catch(e){}
@@ -1761,7 +1795,8 @@ def usuarios_api():
     usuarios = data.get("usuarios", [])
     if not isinstance(usuarios, list):
         return jsonify({"ok": False, "erro": "Lista de usuários inválida."}), 400
-    return jsonify({"ok": True, "usuarios": save_users(usuarios)})
+    merged = merge_users_preserving_existing(load_users(), usuarios)
+    return jsonify({"ok": True, "usuarios": save_users(merged)})
 
 @app.route("/api/login", methods=["POST"])
 def login_api():
