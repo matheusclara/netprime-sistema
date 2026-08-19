@@ -1,0 +1,36 @@
+COMO RODAR COM DOCKER COMPOSE
+
+1. Entrar na pasta do sistema:
+
+   cd /home/nocprime/netprime_sistema_unico_real
+
+2. Parar o servico antigo, se estiver usando systemd/gunicorn fora do Docker:
+
+   sudo systemctl stop netprime
+
+3. Subir com Docker Compose:
+
+   docker compose up -d --build
+
+4. Conferir se subiu:
+
+   docker compose ps
+   docker compose logs -f --tail=80
+
+5. Acessar:
+
+   http://primevendas.netprimegroup.com.br:8088/
+
+IMPORTANTE
+
+- Os dados ficam fora do container nestas pastas:
+  data
+  uploads
+  backups
+
+- Nao apague essas pastas. Elas guardam usuarios, historico, contratos enviados e backups.
+
+- Para atualizar o sistema depois:
+
+  git pull
+  docker compose up -d --build
