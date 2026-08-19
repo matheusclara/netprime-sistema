@@ -1,0 +1,61 @@
+NETPRIME - PUBLICACAO EM VM UBUNTU
+
+Objetivo:
+Rodar o Ecossistema Prime como um sistema unico em uma VM, com Nginx na frente,
+servico automatico no Linux e backup diario local pronto para sincronizar com MEGA.
+
+Arquivos importantes:
+- app.py: sistema principal unificado.
+- data/: configuracoes e historico do validador.
+- uploads/: contratos, documentos e imagens enviadas.
+- backups/: backups diarios gerados automaticamente pelo sistema.
+- requirements.txt: dependencias Python.
+- deploy/netprime.service: modelo de servico systemd.
+- deploy/nginx_netprime.conf: modelo de Nginx.
+- deploy/backup_mega.sh: modelo para enviar backups ao MEGA.
+
+O backup automatico do sistema:
+- Ao iniciar o app, ele cria um backup do dia em backups/netprime_backup_AAAA-MM-DD.zip.
+- A cada hora ele confere se o backup do dia existe.
+- O ZIP inclui app.py, data/ e uploads/.
+- Isso protege as informacoes do sistema e os arquivos enviados.
+
+Importante sobre MEGA:
+- O sistema ja gera o backup local.
+- Quando a VM estiver pronta, configure o MEGA com rclone ou MEGAcmd.
+- Depois aponte o script deploy/backup_mega.sh para enviar a pasta backups/ ao MEGA.
+
+Comandos base na VM:
+
+1. Copiar a pasta do sistema para:
+   /opt/netprime
+
+2. Criar ambiente Python:
+   cd /opt/netprime
+   python3 -m venv .venv
+   . .venv/bin/activate
+   pip install -r requirements.txt
+
+3. Testar:
+   .venv/bin/gunicorn -w 1 -b 127.0.0.1:5000 app:app
+
+4. Instalar servico:
+   sudo cp deploy/netprime.service /etc/systemd/system/netprime.service
+   sudo systemctl daemon-reload
+   sudo systemctl enable netprime
+   sudo systemctl start netprime
+   sudo systemctl status netprime
+
+5. Nginx:
+   sudo cp deploy/nginx_netprime.conf /etc/nginx/sites-available/netprime
+   sudo ln -s /etc/nginx/sites-available/netprime /etc/nginx/sites-enabled/netprime
+   sudo nginx -t
+   sudo systemctl reload nginx
+
+6. SSL:
+   Use Certbot/Let's Encrypt depois que o DNS estiver apontando para a VM.
+
+Observacao:
+Na publicacao final, o ideal e manter tudo em uma unica rota:
+https://sistema.netprime.online
+Contratos continua dentro do proprio sistema, nao como sistema separado.

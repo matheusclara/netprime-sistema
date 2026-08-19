@@ -1,0 +1,15 @@
+Sistema NetPrime - sistema unico real
+
+Use app.py como arquivo principal.
+A tela de orcamentos e a aba Contratos estao no mesmo sistema/HTML.
+Nao existe rota/tela /validador separada nesta versao.
+As rotas /api continuam dentro do mesmo app.py para salvar e validar dados.
+
+Instalar dependencias:
+pip install -r requirements.txt
+
+Rodar:
+python app.py
+
+Acessar:
+http://127.0.0.1:5000/
