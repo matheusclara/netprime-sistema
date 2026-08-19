@@ -1656,6 +1656,64 @@ USER_STRICT_SERVER_SCRIPT = """
 </script>
 """
 
+USER_SERVER_LOGIN_SCRIPT = """
+<script id="np-login-servidor-direto-20260819">
+(function(){
+  function normalize(u){
+    u = u || {};
+    return {
+      name:String(u.name || u.nome || u.user || '').trim(),
+      user:String(u.user || u.login || '').trim(),
+      pass:String(u.pass || u.senha || '').trim(),
+      role:String(u.role || u.categoria || 'vendedor').trim(),
+      tipo:String(u.tipo || u.team || '').trim(),
+      team:String(u.team || u.tipo || '').trim(),
+      phone:String(u.phone || u.telefone || '').trim(),
+      birth:String(u.birth || u.nascimento || '').trim(),
+      photo:String(u.photo || u.foto || '').trim()
+    };
+  }
+  async function loginServer(user, pass){
+    var r = await fetch('/api/login', {
+      method:'POST',
+      cache:'no-store',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({user:user, pass:pass})
+    });
+    var j = await r.json();
+    if(!j || !j.ok) return null;
+    return normalize(j.usuario);
+  }
+  window.doLogin = async function(e){
+    if(e) e.preventDefault();
+    var u = (document.getElementById('loginUser')?.value || '').trim();
+    var p = (document.getElementById('loginPass')?.value || '').trim();
+    var err = document.getElementById('loginError');
+    try{
+      var found = await loginServer(u, p);
+      if(found && found.user){
+        localStorage.setItem('primeBudgetLogged','yes');
+        localStorage.setItem('primeBudgetUser',found.user);
+        localStorage.setItem('primeBudgetRole',found.role || 'vendedor');
+        try{
+          var users = await fetch('/api/usuarios', {cache:'no-store'}).then(function(r){return r.json()});
+          if(users && users.ok) localStorage.setItem('prime_users', JSON.stringify((users.usuarios || []).map(normalize)));
+        }catch(syncErr){}
+        document.body.classList.remove('locked');
+        if(err) err.style.display='none';
+        try{if(typeof applyRoleUI === 'function') applyRoleUI()}catch(ex){}
+        try{if(typeof renderDashboard === 'function') renderDashboard()}catch(ex){}
+        try{if(typeof updateTopUser === 'function') updateTopUser()}catch(ex){}
+        return false;
+      }
+    }catch(ex){}
+    if(err) err.style.display='block';
+    return false;
+  };
+})();
+</script>
+"""
+
 @app.route("/")
 def index():
     html = SISTEMA_HTML
@@ -1665,6 +1723,8 @@ def index():
         html = html.replace("</body>", USER_SYNC_SCRIPT + "\n</body>")
     if "np-usuarios-servidor-forcado-20260819" not in html:
         html = html.replace("</body>", USER_STRICT_SERVER_SCRIPT + "\n</body>")
+    if "np-login-servidor-direto-20260819" not in html:
+        html = html.replace("</body>", USER_SERVER_LOGIN_SCRIPT + "\n</body>")
     response = Response(html, mimetype="text/html; charset=utf-8")
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
@@ -1702,6 +1762,17 @@ def usuarios_api():
     if not isinstance(usuarios, list):
         return jsonify({"ok": False, "erro": "Lista de usuários inválida."}), 400
     return jsonify({"ok": True, "usuarios": save_users(usuarios)})
+
+@app.route("/api/login", methods=["POST"])
+def login_api():
+    data = request.json or {}
+    login = str(data.get("user") or data.get("login") or "").strip().lower()
+    senha = str(data.get("pass") or data.get("senha") or "").strip()
+    for usuario in load_users():
+        if usuario["user"].strip().lower() == login and usuario["pass"] == senha:
+            safe = dict(usuario)
+            return jsonify({"ok": True, "usuario": safe})
+    return jsonify({"ok": False, "erro": "Login ou senha inválidos."}), 401
 
 @app.route("/api/usuarios/upsert", methods=["POST"])
 def usuarios_upsert_api():
