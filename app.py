@@ -2011,8 +2011,8 @@ CLASSIC_LAYOUT_AND_SALES_OWNER_SCRIPT = """
   .crm-layout-option{display:none!important}
   .settings-card button,
   .settings-card .action{font-size:15px!important}
-  body:not(.sidebar-collapsed) .app{grid-template-columns:430px minmax(0,1fr)!important;max-width:1800px!important}
-  body:not(.sidebar-collapsed) .sidebar{max-width:430px!important}
+  body:not(.sidebar-collapsed) .app{grid-template-columns:260px minmax(0,1fr)!important;max-width:1800px!important}
+  body:not(.sidebar-collapsed) .sidebar{width:260px!important;max-width:260px!important;flex:0 0 260px!important}
   body:not(.sidebar-collapsed) .nav-tabs button{min-height:58px!important;font-size:16px!important;gap:12px!important;padding:12px 16px!important;border-radius:14px!important}
   body:not(.sidebar-collapsed) .nav-tabs button::before{font-size:24px!important;width:30px!important;line-height:1!important}
   body.sidebar-collapsed .nav-tabs button{width:58px!important;height:58px!important;min-height:58px!important;font-size:0!important;padding:0!important}
