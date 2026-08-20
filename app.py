@@ -551,11 +551,11 @@ SISTEMA_HTML = SISTEMA_HTML.replace("</body></html>", r"""
   #npBackupAdminPanel h3{margin:0 0 8px;color:#0b3d82}
   #npBackupAdminPanel p{margin:0 0 12px;color:#506787;line-height:1.45}
   #npBackupStatus{font-weight:700;color:#0b3d82;margin:8px 0}
-  #npBackupAdminPanel .np-backup-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
-  #npBackupAdminPanel .np-backup-actions button{width:auto;min-width:220px}
-  #npBackupAdminPanel .np-backup-file{margin-top:14px}
-  #npBackupAdminPanel .np-backup-file label{display:block;margin-bottom:6px}
-  #npBackupAdminPanel .np-backup-file input{margin-bottom:10px}
+  #npBackupAdminPanel .np-backup-actions{display:grid;grid-template-columns:minmax(220px,1fr) minmax(220px,1fr) 58px;gap:10px;align-items:stretch;margin-top:12px}
+  #npBackupAdminPanel .np-backup-actions button{width:100%;min-width:0}
+  #npBackupAdminPanel .np-backup-icon-btn{width:58px!important;min-width:58px!important;height:58px;padding:0!important;display:flex;align-items:center;justify-content:center;font-size:24px;line-height:1}
+  #npBackupFile{display:none!important}
+  @media(max-width:700px){#npBackupAdminPanel .np-backup-actions{grid-template-columns:1fr}#npBackupAdminPanel .np-backup-icon-btn{width:100%!important;min-width:0!important}}
   body:not(.role-admin) #npBackupAdminPanel{display:none!important}
 </style>
 <script id="np-backup-admin-20260820-js">
@@ -666,7 +666,7 @@ SISTEMA_HTML = SISTEMA_HTML.replace("</body></html>", r"""
     var panel=document.createElement("div");
     panel.id="npBackupAdminPanel";
     panel.className="settings-card modern-card np-backup-settings-card full";
-    panel.innerHTML='<h3>Backup do sistema</h3><p>Backup diario automatico completo no servidor. Inclui dados, usuarios, vendas, orcamentos, configuracoes e uploads. No primeiro login diario do admin, o navegador tenta baixar uma copia local.</p><div id="npBackupStatus">Consultando backup...</div><div class="np-backup-actions"><button class="action" type="button" onclick="npBackupCreate()">Gerar backup agora</button><button class="action gray" type="button" onclick="npBackupDownload()">Baixar ultimo backup</button></div><div class="np-backup-file"><label>Subir arquivo de backup (.zip)</label><input id="npBackupFile" type="file" accept=".zip"><button class="action green" type="button" onclick="npBackupUpload()">Importar backup</button></div>';
+    panel.innerHTML='<h3>Backup do sistema</h3><p>Backup diario automatico completo no servidor. Inclui dados, usuarios, vendas, orcamentos, configuracoes e uploads. No primeiro login diario do admin, o navegador tenta baixar uma copia local.</p><div id="npBackupStatus">Consultando backup...</div><div class="np-backup-actions"><button class="action" type="button" onclick="npBackupCreate()">Gerar backup agora</button><button class="action gray" type="button" onclick="npBackupDownload()">Baixar ultimo backup</button><button class="action gray np-backup-icon-btn" type="button" title="Subir arquivo de backup" aria-label="Subir arquivo de backup" onclick="var f=document.getElementById(&quot;npBackupFile&quot;); if(f) f.click();">⬆</button></div><input id="npBackupFile" type="file" accept=".zip" onchange="npBackupUpload()">';
     root.appendChild(panel);
     refresh();
   }
