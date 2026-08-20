@@ -1,5 +1,5 @@
 
-import os, json, base64, datetime, re, socket, threading, webbrowser, time, zipfile
+import os, json, base64, datetime, re, socket, threading, webbrowser, time, zipfile, secrets
 import httpx
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, Response
@@ -22,6 +22,7 @@ BACKUP_DIR = APP_DIR / "backups"
 CONFIG_FILE = DATA_DIR / "config.json"
 HISTORY_FILE = DATA_DIR / "historico.json"
 USERS_FILE = DATA_DIR / "usuarios.json"
+MASTER_ACCESS_FILE = DATA_DIR / "master_access.json"
 SALES_FILE = DATA_DIR / "vendas.json"
 QUOTES_FILE = DATA_DIR / "orcamentos.json"
 DATA_DIR.mkdir(exist_ok=True)
@@ -347,6 +348,34 @@ DEFAULT_USERS = [
     {"name": "Monitoramento", "user": "monitoramento", "pass": "monitoramento123", "role": "monitoramento", "tipo": ""},
 ]
 
+def get_default_master_user():
+    password = (os.environ.get("NETPRIME_MASTER_PASSWORD") or "").strip()
+    if not password:
+        try:
+            if MASTER_ACCESS_FILE.exists():
+                saved = json.loads(MASTER_ACCESS_FILE.read_text(encoding="utf-8"))
+                password = str(saved.get("password") or "").strip()
+        except Exception:
+            password = ""
+    if not password:
+        password = secrets.token_urlsafe(14)
+        try:
+            MASTER_ACCESS_FILE.write_text(
+                json.dumps({
+                    "user": "master",
+                    "password": password,
+                    "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
+                    "note": "Senha gerada automaticamente. Altere pelo sistema apos o primeiro acesso.",
+                }, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+    return {"name": "Master", "user": "master", "pass": password, "role": "admin", "tipo": ""}
+
+def default_users():
+    return [get_default_master_user()] + [normalize_user(x) for x in DEFAULT_USERS]
+
 def normalize_user(item):
     item = item or {}
     return {
@@ -360,21 +389,7 @@ def normalize_user(item):
         "photo": str(item.get("photo") or item.get("foto") or "").strip(),
     }
 
-def load_users():
-    if USERS_FILE.exists():
-        try:
-            raw = json.loads(USERS_FILE.read_text(encoding="utf-8"))
-            if isinstance(raw, list):
-                users = [normalize_user(x) for x in raw]
-                users = [u for u in users if u["user"]]
-                if users:
-                    return users
-        except Exception:
-            pass
-    save_users(DEFAULT_USERS)
-    return [normalize_user(x) for x in DEFAULT_USERS]
-
-def save_users(users):
+def ensure_default_users(users):
     cleaned = []
     seen = set()
     for item in users or []:
@@ -384,8 +399,33 @@ def save_users(users):
             continue
         seen.add(key)
         cleaned.append(user)
-    if not any(u["user"] == "admin" for u in cleaned):
-        cleaned.insert(0, normalize_user(DEFAULT_USERS[0]))
+
+    missing_defaults = []
+    for item in default_users():
+        key = item["user"].lower()
+        if key and key not in seen:
+            seen.add(key)
+            missing_defaults.append(item)
+
+    return missing_defaults + cleaned
+
+def load_users():
+    if USERS_FILE.exists():
+        try:
+            raw = json.loads(USERS_FILE.read_text(encoding="utf-8"))
+            if isinstance(raw, list):
+                users = ensure_default_users(raw)
+                if users:
+                    if len(users) != len(raw):
+                        save_users(users)
+                    return users
+        except Exception:
+            pass
+    save_users(default_users())
+    return ensure_default_users(default_users())
+
+def save_users(users):
+    cleaned = ensure_default_users(users)
     USERS_FILE.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8")
     return cleaned
 
