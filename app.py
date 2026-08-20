@@ -2002,6 +2002,146 @@ SERVER_DATA_SYNC_SCRIPT = """
 </script>
 """
 
+CLASSIC_LAYOUT_AND_SALES_OWNER_SCRIPT = """
+<style id="np-layout-classico-vendas-proprias-20260820-css">
+  body.layout-crm, body.crm-layout, body.crm-mode{--np-force-classic:1}
+  button[data-layout="crm"],
+  [data-layout="crm"],
+  .layout-crm-option,
+  .crm-layout-option{display:none!important}
+  .settings-card button,
+  .settings-card .action{font-size:15px!important}
+  body:not(.sidebar-collapsed) .app{grid-template-columns:430px minmax(0,1fr)!important;max-width:1800px!important}
+  body:not(.sidebar-collapsed) .sidebar{max-width:430px!important}
+  body:not(.sidebar-collapsed) .nav-tabs button{min-height:58px!important;font-size:16px!important;gap:12px!important;padding:12px 16px!important;border-radius:14px!important}
+  body:not(.sidebar-collapsed) .nav-tabs button::before{font-size:24px!important;width:30px!important;line-height:1!important}
+  body.sidebar-collapsed .nav-tabs button{width:58px!important;height:58px!important;min-height:58px!important;font-size:0!important;padding:0!important}
+  body.sidebar-collapsed .nav-tabs button::before{font-size:22px!important;width:auto!important}
+  .sales-status-only .sales-table-wrap button,
+  .sales-status-only table button{display:inline-block!important}
+  .sales-status-only #salesBulkValidation,
+  .sales-status-only .sales-bulk-validation,
+  .sales-status-only .sales-select-head,
+  .sales-status-only .sales-select-row{display:none!important}
+</style>
+<script id="np-layout-classico-vendas-proprias-20260820">
+(function(){
+  function txt(el){return String((el && el.textContent) || '').toLowerCase()}
+  function setClassicStorage(){
+    ['primeLayout','prime_layout','netprimeLayout','layoutSistema','systemLayout','npLayout'].forEach(function(k){
+      try{localStorage.setItem(k,'classic')}catch(e){}
+    });
+  }
+  function forceClassicLayout(){
+    setClassicStorage();
+    document.body.classList.remove('layout-crm','crm-layout','crm-mode','layoutCRM');
+    document.body.classList.add('layout-classic');
+    Array.prototype.slice.call(document.querySelectorAll('button,a,label')).forEach(function(el){
+      var t = txt(el);
+      if(t.indexOf('layout crm') >= 0 || t === 'crm' || t.indexOf(' layout crm') >= 0){
+        el.style.display = 'none';
+        el.setAttribute('aria-hidden','true');
+      }
+      if(t.indexOf('layout class') >= 0){
+        el.classList.add('active');
+        if(el.tagName === 'BUTTON' && !el.__npClassicClicked){
+          el.__npClassicClicked = true;
+          try{el.click()}catch(e){}
+        }
+      }
+    });
+  }
+  function authHeaders(){
+    var user = localStorage.getItem('primeBudgetUser') || '';
+    var pass = sessionStorage.getItem('primeBudgetPass') || '';
+    if(!user || !pass) return null;
+    return {'Content-Type':'application/json','X-Netprime-User':user,'X-Netprime-Pass':pass};
+  }
+  function readSales(){
+    try{
+      var data = JSON.parse(localStorage.getItem('prime_sales') || '[]');
+      return Array.isArray(data) ? data : [];
+    }catch(e){return []}
+  }
+  function writeSales(items){
+    try{localStorage.setItem('prime_sales', JSON.stringify(Array.isArray(items) ? items : []))}catch(e){}
+  }
+  function saleFromArgument(arg){
+    var list = readSales();
+    var key = String(arg == null ? '' : arg);
+    var found = list.find(function(item){return String((item || {}).id || '') === key});
+    if(found) return found;
+    var idx = Number(arg);
+    if(Number.isFinite(idx) && idx >= 0 && idx < list.length) return list[idx];
+    return null;
+  }
+  function rerenderSales(){
+    try{if(typeof renderSalesView === 'function') renderSalesView()}catch(e){}
+    try{if(typeof renderDashboard === 'function') renderDashboard()}catch(e){}
+  }
+  async function deleteSaleOnServer(sale){
+    var headers = authHeaders();
+    if(!headers || !sale || !sale.id) return;
+    try{
+      var r = await fetch('/api/vendas/delete', {
+        method:'POST',
+        cache:'no-store',
+        headers:headers,
+        body:JSON.stringify({id:sale.id})
+      });
+      if(!r.ok) return;
+      var j = await r.json();
+      if(j && j.ok && Array.isArray(j.vendas)){
+        writeSales(j.vendas);
+        rerenderSales();
+      }
+    }catch(e){}
+  }
+  function allowSellerOwnSaleActions(){
+    Array.prototype.slice.call(document.querySelectorAll('.sales-status-only .sales-table-wrap button,.sales-status-only table button')).forEach(function(btn){
+      var onclick = String(btn.getAttribute('onclick') || '').toLowerCase();
+      if(onclick.indexOf('editsale') >= 0 || onclick.indexOf('deletesale') >= 0 || txt(btn).indexOf('editar') >= 0 || txt(btn).indexOf('excluir') >= 0){
+        btn.style.display = 'inline-block';
+      }
+    });
+  }
+  var oldDeleteSale = window.deleteSale;
+  if(typeof oldDeleteSale === 'function' && !oldDeleteSale.__npSellerServerDelete){
+    window.deleteSale = function(){
+      var sale = saleFromArgument(arguments[0]);
+      var result = oldDeleteSale.apply(this, arguments);
+      deleteSaleOnServer(sale);
+      return result;
+    };
+    window.deleteSale.__npSellerServerDelete = true;
+  }
+  var oldRenderSales = window.renderSalesView;
+  if(typeof oldRenderSales === 'function' && !oldRenderSales.__npSellerActions){
+    window.renderSalesView = function(){
+      var result = oldRenderSales.apply(this, arguments);
+      setTimeout(allowSellerOwnSaleActions, 80);
+      return result;
+    };
+    window.renderSalesView.__npSellerActions = true;
+  }
+  var oldShowView = window.showView;
+  if(typeof oldShowView === 'function' && !oldShowView.__npClassicLayout){
+    window.showView = function(){
+      var result = oldShowView.apply(this, arguments);
+      setTimeout(function(){forceClassicLayout(); allowSellerOwnSaleActions()}, 80);
+      return result;
+    };
+    window.showView.__npClassicLayout = true;
+  }
+  document.addEventListener('DOMContentLoaded', function(){
+    setTimeout(function(){forceClassicLayout(); allowSellerOwnSaleActions()}, 250);
+    setTimeout(function(){forceClassicLayout(); allowSellerOwnSaleActions()}, 900);
+  });
+  setInterval(function(){forceClassicLayout(); allowSellerOwnSaleActions()}, 1500);
+})();
+</script>
+"""
+
 @app.route("/")
 def index():
     html = SISTEMA_HTML
@@ -2015,6 +2155,8 @@ def index():
         html = html.replace("</body>", USER_SERVER_LOGIN_SCRIPT + "\n</body>")
     if "np-dados-servidor-vendas-orcamentos-20260819" not in html:
         html = html.replace("</body>", SERVER_DATA_SYNC_SCRIPT + "\n</body>")
+    if "np-layout-classico-vendas-proprias-20260820" not in html:
+        html = html.replace("</body>", CLASSIC_LAYOUT_AND_SALES_OWNER_SCRIPT + "\n</body>")
     response = Response(html, mimetype="text/html; charset=utf-8")
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
@@ -2106,6 +2248,30 @@ def vendas_sync_api():
     merged = merge_records(load_json_list(SALES_FILE), incoming, 1000)
     save_json_list(SALES_FILE, merged, 1000)
     return jsonify({"ok": True, "vendas": visible_records_for_user(merged, api_user)})
+
+@app.route("/api/vendas/delete", methods=["POST"])
+def vendas_delete_api():
+    api_user = current_api_user()
+    if not api_user:
+        return jsonify({"ok": False, "erro": "Acesso não autorizado."}), 403
+    data = request.json or {}
+    sale_id = str(data.get("id") or data.get("sale_id") or "").strip()
+    if not sale_id:
+        return jsonify({"ok": False, "erro": "ID da venda não informado."}), 400
+    role = str(api_user.get("role") or "").strip().lower()
+    vendas = load_json_list(SALES_FILE)
+    kept = []
+    removed = False
+    for item in vendas:
+        if str((item or {}).get("id") or "").strip() == sale_id:
+            if role != "admin" and not owner_matches(item, api_user):
+                return jsonify({"ok": False, "erro": "Você só pode excluir vendas lançadas pelo seu usuário."}), 403
+            removed = True
+            continue
+        kept.append(item)
+    if removed:
+        save_json_list(SALES_FILE, kept, 1000)
+    return jsonify({"ok": True, "removed": removed, "vendas": visible_records_for_user(kept, api_user)})
 
 @app.route("/api/orcamentos", methods=["GET"])
 def orcamentos_api():
