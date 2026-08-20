@@ -546,10 +546,16 @@ def delete_user(login):
 
 SISTEMA_HTML = SISTEMA_HTML.replace("</body></html>", r"""
 <style id="np-backup-admin-20260820-css">
-  #npBackupAdminPanel{border:1px solid #d7e1ef;border-radius:16px;background:#fbfdff;padding:16px;margin-top:16px}
+  #npBackupAdminPanel{border:1px solid #d7e1ef;border-radius:16px;background:#fbfdff;padding:16px;margin-top:0;box-shadow:0 8px 22px rgba(8,43,95,.06)}
+  #npBackupAdminPanel.np-backup-settings-card{grid-column:1/-1}
   #npBackupAdminPanel h3{margin:0 0 8px;color:#0b3d82}
+  #npBackupAdminPanel p{margin:0 0 12px;color:#506787;line-height:1.45}
+  #npBackupStatus{font-weight:700;color:#0b3d82;margin:8px 0}
   #npBackupAdminPanel .np-backup-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
-  #npBackupAdminPanel .np-backup-file{margin-top:12px}
+  #npBackupAdminPanel .np-backup-actions button{width:auto;min-width:220px}
+  #npBackupAdminPanel .np-backup-file{margin-top:14px}
+  #npBackupAdminPanel .np-backup-file label{display:block;margin-bottom:6px}
+  #npBackupAdminPanel .np-backup-file input{margin-bottom:10px}
   body:not(.role-admin) #npBackupAdminPanel{display:none!important}
 </style>
 <script id="np-backup-admin-20260820-js">
@@ -570,13 +576,18 @@ SISTEMA_HTML = SISTEMA_HTML.replace("</body></html>", r"""
   }
   function container(){
     var direct=document.querySelector("#settingsView,#settingsPanel,#settingsSection,[data-view='settings'],[data-view='ajustes']");
-    if(direct)return direct;
+    if(direct){
+      var directGrid=direct.querySelector(".settings-grid,.config-grid,.cards-grid,.dashboard-grid,.settings-cards");
+      return directGrid||direct;
+    }
     var heads=Array.prototype.slice.call(document.querySelectorAll("h1,h2,h3")).filter(function(h){
       return h.offsetParent!==null && String(h.textContent||"").toLowerCase().indexOf("ajustes")>=0;
     });
     if(heads[0]){
       var card=heads[0].closest(".modern-card,.settings-card,.dash-section,.section");
-      return (card&&card.parentElement)||heads[0].parentElement;
+      var host=(card&&card.parentElement)||heads[0].parentElement;
+      var hostGrid=host&&host.querySelector&&host.querySelector(".settings-grid,.config-grid,.cards-grid,.dashboard-grid,.settings-cards");
+      return hostGrid||host;
     }
     return document.querySelector("main,.preview-wrap,.content")||document.body;
   }
@@ -643,11 +654,18 @@ SISTEMA_HTML = SISTEMA_HTML.replace("</body></html>", r"""
   }
   function ensure(){
     if(!isAdmin()||!isSettingsVisible())return;
-    if(document.getElementById("npBackupAdminPanel")){refresh();return;}
+    var existing=document.getElementById("npBackupAdminPanel");
+    if(existing){
+      existing.classList.add("settings-card","modern-card","np-backup-settings-card","full");
+      var target=container();
+      if(target&&existing.parentElement!==target)target.appendChild(existing);
+      refresh();
+      return;
+    }
     var root=container();
     var panel=document.createElement("div");
     panel.id="npBackupAdminPanel";
-    panel.className="settings-card modern-card";
+    panel.className="settings-card modern-card np-backup-settings-card full";
     panel.innerHTML='<h3>Backup do sistema</h3><p>Backup diario automatico completo no servidor. Inclui dados, usuarios, vendas, orcamentos, configuracoes e uploads. No primeiro login diario do admin, o navegador tenta baixar uma copia local.</p><div id="npBackupStatus">Consultando backup...</div><div class="np-backup-actions"><button class="action" type="button" onclick="npBackupCreate()">Gerar backup agora</button><button class="action gray" type="button" onclick="npBackupDownload()">Baixar ultimo backup</button></div><div class="np-backup-file"><label>Subir arquivo de backup (.zip)</label><input id="npBackupFile" type="file" accept=".zip"><button class="action green" type="button" onclick="npBackupUpload()">Importar backup</button></div>';
     root.appendChild(panel);
     refresh();
