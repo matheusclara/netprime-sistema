@@ -589,6 +589,49 @@ SISTEMA_HTML = SISTEMA_HTML.replace("</body></html>", r"""
     if(json)headers["Content-Type"]="application/json";
     return headers;
   }
+  function backupTodayKey(){
+    var d=new Date();
+    var m=String(d.getMonth()+1).padStart(2,"0");
+    var day=String(d.getDate()).padStart(2,"0");
+    return d.getFullYear()+"-"+m+"-"+day;
+  }
+  function alreadyAutoDownloaded(){
+    try{return localStorage.getItem("npBackupAutoDownloadedDate")===backupTodayKey();}catch(e){return false;}
+  }
+  function markAutoDownloadDone(){
+    try{localStorage.setItem("npBackupAutoDownloadedDate",backupTodayKey());}catch(e){}
+  }
+  async function downloadBackupSilently(auto){
+    try{
+      var headers=backupHeaders(false);
+      if(!headers)return false;
+      var r=await fetch("/api/backup/download?"+(auto?"auto=1&":"")+"ts="+Date.now(),{cache:"no-store",headers:headers});
+      if(!r.ok)return false;
+      var blob=await r.blob();
+      var disposition=r.headers.get("Content-Disposition")||"";
+      var match=disposition.match(/filename="?([^"]+)/i);
+      var name=match?match[1]:"netprime_backup.zip";
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement("a");
+      a.href=url;
+      a.download=name;
+      a.style.display="none";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function(){URL.revokeObjectURL(url);},1000);
+      return true;
+    }catch(e){return false;}
+  }
+  async function autoDownloadBackupOnce(){
+    if(!isAdmin()||alreadyAutoDownloaded())return;
+    var ok=await downloadBackupSilently(true);
+    if(ok)markAutoDownloadDone();
+  }
+  function scheduleAutoBackupDownload(){
+    setTimeout(autoDownloadBackupOnce,1200);
+    setTimeout(autoDownloadBackupOnce,3500);
+  }
   async function refresh(){
     var box=document.getElementById("npBackupStatus");
     if(!box)return;
@@ -605,7 +648,7 @@ SISTEMA_HTML = SISTEMA_HTML.replace("</body></html>", r"""
     var panel=document.createElement("div");
     panel.id="npBackupAdminPanel";
     panel.className="settings-card modern-card";
-    panel.innerHTML='<h3>Backup do sistema</h3><p>Backup diario automatico no servidor. Ao entrar no sistema, ele confere se o backup do dia ja existe.</p><div id="npBackupStatus">Consultando backup...</div><div class="np-backup-actions"><button class="action" type="button" onclick="npBackupCreate()">Gerar backup agora</button><button class="action gray" type="button" onclick="npBackupDownload()">Baixar ultimo backup</button></div><div class="np-backup-file"><label>Subir arquivo de backup (.zip)</label><input id="npBackupFile" type="file" accept=".zip"><button class="action green" type="button" onclick="npBackupUpload()">Importar backup</button></div>';
+    panel.innerHTML='<h3>Backup do sistema</h3><p>Backup diario automatico completo no servidor. Inclui dados, usuarios, vendas, orcamentos, configuracoes e uploads. No primeiro login diario do admin, o navegador tenta baixar uma copia local.</p><div id="npBackupStatus">Consultando backup...</div><div class="np-backup-actions"><button class="action" type="button" onclick="npBackupCreate()">Gerar backup agora</button><button class="action gray" type="button" onclick="npBackupDownload()">Baixar ultimo backup</button></div><div class="np-backup-file"><label>Subir arquivo de backup (.zip)</label><input id="npBackupFile" type="file" accept=".zip"><button class="action green" type="button" onclick="npBackupUpload()">Importar backup</button></div>';
     root.appendChild(panel);
     refresh();
   }
@@ -616,22 +659,8 @@ SISTEMA_HTML = SISTEMA_HTML.replace("</body></html>", r"""
     refresh();
   };
   window.npBackupDownload=async function(){
-    try{
-      var r=await fetch("/api/backup/download?ts="+Date.now(),{cache:"no-store",headers:backupHeaders(false)||{}});
-      if(!r.ok)return alert("Sem permissao para baixar backup.");
-      var blob=await r.blob();
-      var disposition=r.headers.get("Content-Disposition")||"";
-      var match=disposition.match(/filename="?([^"]+)/i);
-      var name=match?match[1]:"netprime_backup.zip";
-      var url=URL.createObjectURL(blob);
-      var a=document.createElement("a");
-      a.href=url;
-      a.download=name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(function(){URL.revokeObjectURL(url)},1000);
-    }catch(e){alert("Falha ao baixar backup.");}
+    var ok=await downloadBackupSilently(false);
+    if(!ok)return alert("Sem permissao ou falha ao baixar backup.");
   };
   window.npBackupUpload=async function(){
     var input=document.getElementById("npBackupFile");
@@ -648,10 +677,10 @@ SISTEMA_HTML = SISTEMA_HTML.replace("</body></html>", r"""
   };
   var oldShow=window.showView;
   if(typeof oldShow==="function"&&!oldShow.__npBackupAdmin){
-    window.showView=function(v){var r=oldShow.apply(this,arguments);setTimeout(ensure,150);return r;};
+    window.showView=function(v){var r=oldShow.apply(this,arguments);setTimeout(ensure,150);scheduleAutoBackupDownload();return r;};
     window.showView.__npBackupAdmin=true;
   }
-  document.addEventListener("DOMContentLoaded",function(){setTimeout(ensure,800)});
+  document.addEventListener("DOMContentLoaded",function(){setTimeout(ensure,800);scheduleAutoBackupDownload();});
   setInterval(ensure,2000);
 })();
 </script>
