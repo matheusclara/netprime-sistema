@@ -30,21 +30,50 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 BACKUP_DIR.mkdir(exist_ok=True)
 _BACKUP_THREAD_STARTED = False
 
-def create_daily_backup(force=False):
-    today = datetime.date.today().strftime("%Y-%m-%d")
-    backup_file = BACKUP_DIR / f"netprime_backup_{today}.zip"
-    if backup_file.exists() and not force:
-        return backup_file
+def _backup_timestamp():
+    return datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
+def _safe_backup_reason(reason):
+    safe = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(reason or "manual")).strip("_")
+    return safe or "manual"
+
+def create_system_backup(reason="daily", force=False):
+    today = datetime.date.today().strftime("%Y-%m-%d")
+    reason = _safe_backup_reason(reason)
+    if reason == "daily":
+        backup_file = BACKUP_DIR / f"netprime_backup_{today}.zip"
+        if backup_file.exists() and not force:
+            return backup_file
+    else:
+        backup_file = BACKUP_DIR / f"netprime_backup_{reason}_{_backup_timestamp()}.zip"
+
+    tmp_file = backup_file.with_suffix(".zip.tmp")
     manifest = {
         "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "reason": reason,
         "app_dir": str(APP_DIR),
-        "includes": ["app.py", "data", "uploads", "requirements.txt", "iniciar.bat", "instalar.bat", "LEIA_PARA_PUBLICAR.txt"],
+        "includes": [
+            "app.py",
+            "data",
+            "uploads",
+            "requirements.txt",
+            "Dockerfile",
+            "docker-compose.yml",
+            "LEIA_PARA_PUBLICAR.txt",
+            "PUBLICAR_VM_UBUNTU.txt",
+        ],
     }
 
-    with zipfile.ZipFile(backup_file, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(tmp_file, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("backup_manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
-        for name in ["app.py", "requirements.txt", "iniciar.bat", "instalar.bat", "LEIA_PARA_PUBLICAR.txt"]:
+        for name in [
+            "app.py",
+            "requirements.txt",
+            "Dockerfile",
+            "docker-compose.yml",
+            "LEIA_PARA_PUBLICAR.txt",
+            "PUBLICAR_VM_UBUNTU.txt",
+        ]:
             path = APP_DIR / name
             if path.exists() and path.is_file():
                 zf.write(path, path.name)
@@ -54,7 +83,41 @@ def create_daily_backup(force=False):
             for path in folder.rglob("*"):
                 if path.is_file():
                     zf.write(path, path.relative_to(APP_DIR))
+    tmp_file.replace(backup_file)
     return backup_file
+
+def create_daily_backup(force=False):
+    return create_system_backup("daily", force=force)
+
+def latest_backup_file():
+    files = [p for p in BACKUP_DIR.glob("*.zip") if p.is_file()]
+    if not files:
+        return create_daily_backup(force=True)
+    return max(files, key=lambda p: p.stat().st_mtime)
+
+def restore_backup_zip(backup_path):
+    restored = []
+    allowed_roots = [DATA_DIR.resolve(), UPLOAD_DIR.resolve()]
+    with zipfile.ZipFile(backup_path) as zf:
+        for member in zf.infolist():
+            if member.is_dir():
+                continue
+            raw_name = member.filename.replace("\\", "/").lstrip("/")
+            if ".." in raw_name.split("/"):
+                continue
+            if raw_name.startswith("data/") or raw_name.startswith("uploads/"):
+                dest = (APP_DIR / raw_name).resolve()
+            elif "/" not in raw_name and raw_name.endswith(".json"):
+                dest = (DATA_DIR / raw_name).resolve()
+            else:
+                continue
+            if not any(dest == root or str(dest).startswith(str(root) + os.sep) for root in allowed_roots):
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(member, "r") as src, open(dest, "wb") as out:
+                out.write(src.read())
+            restored.append(raw_name)
+    return restored
 
 def daily_backup_loop():
     while True:
@@ -480,6 +543,120 @@ def delete_user(login):
         raise ValueError("O usuário admin padrão não pode ser removido.")
     users = [u for u in load_users() if u["user"].lower() != login]
     return save_users(users)
+
+SISTEMA_HTML = SISTEMA_HTML.replace("</body></html>", r"""
+<style id="np-backup-admin-20260820-css">
+  #npBackupAdminPanel{border:1px solid #d7e1ef;border-radius:16px;background:#fbfdff;padding:16px;margin-top:16px}
+  #npBackupAdminPanel h3{margin:0 0 8px;color:#0b3d82}
+  #npBackupAdminPanel .np-backup-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  #npBackupAdminPanel .np-backup-file{margin-top:12px}
+  body:not(.role-admin) #npBackupAdminPanel{display:none!important}
+</style>
+<script id="np-backup-admin-20260820-js">
+(function(){
+  function roleNowBackup(){
+    try{if(typeof currentRole==="function")return String(currentRole()).toLowerCase()}catch(e){}
+    try{if(typeof roleNow==="function")return String(roleNow()).toLowerCase()}catch(e){}
+    try{var raw=localStorage.getItem("primeBudgetUserObj")||localStorage.getItem("primeUser")||""; if(raw){var u=JSON.parse(raw); return String(u.role||u.perfil||"").toLowerCase();}}catch(e){}
+    return String(localStorage.getItem("primeBudgetRole")||"").toLowerCase();
+  }
+  function isAdmin(){return roleNowBackup()==="admin";}
+  function isSettingsVisible(){
+    var view=String(document.body.getAttribute("data-view")||"").toLowerCase();
+    if(view.indexOf("setting")>=0||view.indexOf("ajust")>=0)return true;
+    return Array.prototype.slice.call(document.querySelectorAll("h1,h2,h3")).some(function(h){
+      return h.offsetParent!==null && String(h.textContent||"").toLowerCase().indexOf("ajustes")>=0;
+    });
+  }
+  function container(){
+    var direct=document.querySelector("#settingsView,#settingsPanel,#settingsSection,[data-view='settings'],[data-view='ajustes']");
+    if(direct)return direct;
+    var heads=Array.prototype.slice.call(document.querySelectorAll("h1,h2,h3")).filter(function(h){
+      return h.offsetParent!==null && String(h.textContent||"").toLowerCase().indexOf("ajustes")>=0;
+    });
+    if(heads[0]){
+      var card=heads[0].closest(".modern-card,.settings-card,.dash-section,.section");
+      return (card&&card.parentElement)||heads[0].parentElement;
+    }
+    return document.querySelector("main,.preview-wrap,.content")||document.body;
+  }
+  function fmt(n){n=Number(n||0); if(n>1048576)return (n/1048576).toFixed(1)+" MB"; if(n>1024)return (n/1024).toFixed(1)+" KB"; return n+" B";}
+  function backupHeaders(json){
+    var user=localStorage.getItem("primeBudgetUser")||"";
+    var pass=sessionStorage.getItem("primeBudgetPass")||"";
+    if(!user||!pass)return null;
+    var headers={"X-Netprime-User":user,"X-Netprime-Pass":pass};
+    if(json)headers["Content-Type"]="application/json";
+    return headers;
+  }
+  async function refresh(){
+    var box=document.getElementById("npBackupStatus");
+    if(!box)return;
+    try{
+      var r=await fetch("/api/backup/status",{cache:"no-store",headers:backupHeaders(false)||{}});
+      var j=await r.json();
+      box.textContent=j.ok?("Ultimo backup: "+j.arquivo+" ("+fmt(j.tamanho)+")"):"Nao foi possivel consultar o backup.";
+    }catch(e){box.textContent="Nao foi possivel consultar o backup.";}
+  }
+  function ensure(){
+    if(!isAdmin()||!isSettingsVisible())return;
+    if(document.getElementById("npBackupAdminPanel")){refresh();return;}
+    var root=container();
+    var panel=document.createElement("div");
+    panel.id="npBackupAdminPanel";
+    panel.className="settings-card modern-card";
+    panel.innerHTML='<h3>Backup do sistema</h3><p>Backup diario automatico no servidor. Ao entrar no sistema, ele confere se o backup do dia ja existe.</p><div id="npBackupStatus">Consultando backup...</div><div class="np-backup-actions"><button class="action" type="button" onclick="npBackupCreate()">Gerar backup agora</button><button class="action gray" type="button" onclick="npBackupDownload()">Baixar ultimo backup</button></div><div class="np-backup-file"><label>Subir arquivo de backup (.zip)</label><input id="npBackupFile" type="file" accept=".zip"><button class="action green" type="button" onclick="npBackupUpload()">Importar backup</button></div>';
+    root.appendChild(panel);
+    refresh();
+  }
+  window.npBackupCreate=async function(){
+    var box=document.getElementById("npBackupStatus"); if(box)box.textContent="Gerando backup...";
+    try{var r=await fetch("/api/backup/create",{method:"POST",headers:backupHeaders(false)||{}}); var j=await r.json(); alert(j.ok?"Backup gerado: "+j.arquivo:(j.erro||"Falha ao gerar backup."));}
+    catch(e){alert("Falha ao gerar backup.");}
+    refresh();
+  };
+  window.npBackupDownload=async function(){
+    try{
+      var r=await fetch("/api/backup/download?ts="+Date.now(),{cache:"no-store",headers:backupHeaders(false)||{}});
+      if(!r.ok)return alert("Sem permissao para baixar backup.");
+      var blob=await r.blob();
+      var disposition=r.headers.get("Content-Disposition")||"";
+      var match=disposition.match(/filename="?([^"]+)/i);
+      var name=match?match[1]:"netprime_backup.zip";
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement("a");
+      a.href=url;
+      a.download=name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function(){URL.revokeObjectURL(url)},1000);
+    }catch(e){alert("Falha ao baixar backup.");}
+  };
+  window.npBackupUpload=async function(){
+    var input=document.getElementById("npBackupFile");
+    if(!input||!input.files||!input.files[0])return alert("Selecione um arquivo .zip de backup.");
+    if(!confirm("Importar backup substitui dados do sistema pelos dados do arquivo. Continuar?"))return;
+    var fd=new FormData(); fd.append("backup",input.files[0]);
+    try{
+      var r=await fetch("/api/backup/upload",{method:"POST",headers:backupHeaders(false)||{},body:fd});
+      var j=await r.json();
+      if(!j.ok)return alert(j.erro||"Falha ao importar backup.");
+      alert("Backup importado. Arquivos restaurados: "+j.arquivos_restaurados+". O sistema vai recarregar.");
+      location.reload();
+    }catch(e){alert("Falha ao importar backup.");}
+  };
+  var oldShow=window.showView;
+  if(typeof oldShow==="function"&&!oldShow.__npBackupAdmin){
+    window.showView=function(v){var r=oldShow.apply(this,arguments);setTimeout(ensure,150);return r;};
+    window.showView.__npBackupAdmin=true;
+  }
+  document.addEventListener("DOMContentLoaded",function(){setTimeout(ensure,800)});
+  setInterval(ensure,2000);
+})();
+</script>
+</body></html>
+""", 1)
 
 app = Flask(__name__)
 ALLOWED = {".pdf",".png",".jpg",".jpeg",".webp"}
@@ -2243,9 +2420,78 @@ def login_api():
     senha = str(data.get("pass") or data.get("senha") or "").strip()
     for usuario in load_users():
         if usuario["user"].strip().lower() == login and usuario["pass"] == senha:
+            try:
+                create_daily_backup()
+            except Exception as exc:
+                print(f"Falha ao verificar backup no login: {exc}")
             safe = dict(usuario)
             return jsonify({"ok": True, "usuario": safe})
     return jsonify({"ok": False, "erro": "Login ou senha inválidos."}), 401
+
+def require_backup_admin():
+    usuario = current_api_user()
+    if usuario and str(usuario.get("role") or "").strip().lower() == "admin":
+        return usuario
+    return None
+
+@app.route("/api/backup/status", methods=["GET"])
+def backup_status_api():
+    if not require_backup_admin():
+        return jsonify({"ok": False, "erro": "Acesso não autorizado."}), 403
+    try:
+        backup = latest_backup_file()
+        stat = backup.stat()
+        return jsonify({
+            "ok": True,
+            "arquivo": backup.name,
+            "tamanho": stat.st_size,
+            "modificado_em": datetime.datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "erro": str(exc)}), 500
+
+@app.route("/api/backup/create", methods=["POST"])
+def backup_create_api():
+    if not require_backup_admin():
+        return jsonify({"ok": False, "erro": "Acesso não autorizado."}), 403
+    try:
+        backup = create_system_backup("manual", force=True)
+        return jsonify({"ok": True, "arquivo": backup.name, "tamanho": backup.stat().st_size})
+    except Exception as exc:
+        return jsonify({"ok": False, "erro": str(exc)}), 500
+
+@app.route("/api/backup/download", methods=["GET"])
+def backup_download_api():
+    if not require_backup_admin():
+        return jsonify({"ok": False, "erro": "Acesso não autorizado."}), 403
+    try:
+        backup = latest_backup_file()
+        return send_file(backup, mimetype="application/zip", as_attachment=True, download_name=backup.name)
+    except Exception as exc:
+        return jsonify({"ok": False, "erro": str(exc)}), 500
+
+@app.route("/api/backup/upload", methods=["POST"])
+def backup_upload_api():
+    if not require_backup_admin():
+        return jsonify({"ok": False, "erro": "Acesso não autorizado."}), 403
+    file = request.files.get("backup")
+    if not file or not file.filename:
+        return jsonify({"ok": False, "erro": "Envie um arquivo .zip de backup."}), 400
+    filename = secure_filename(file.filename)
+    if not filename.lower().endswith(".zip"):
+        return jsonify({"ok": False, "erro": "O arquivo de backup precisa ser .zip."}), 400
+    restore_path = BACKUP_DIR / f"upload_restore_{_backup_timestamp()}_{filename}"
+    try:
+        file.save(restore_path)
+        create_system_backup("pre_import", force=True)
+        restored = restore_backup_zip(restore_path)
+        if not restored:
+            return jsonify({"ok": False, "erro": "Nenhum arquivo válido encontrado no backup."}), 400
+        return jsonify({"ok": True, "arquivos_restaurados": len(restored), "arquivo": restore_path.name})
+    except zipfile.BadZipFile:
+        return jsonify({"ok": False, "erro": "Arquivo de backup inválido ou corrompido."}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "erro": str(exc)}), 500
 
 @app.route("/api/usuarios/upsert", methods=["POST"])
 def usuarios_upsert_api():
